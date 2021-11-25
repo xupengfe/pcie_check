@@ -23,9 +23,11 @@
 #define LEN_SIZE sizeof(unsigned long)
 #define MAPS_LINE_LEN 128
 
+#define EXP_CAP 4
+
 static unsigned long BASE_ADDR;
-static int check_list, is_pcie, is_cxl;
-static uint32_t sbus, sdev, sfunc, spec_offset, *reg_data, reg_value;
+static int check_list, is_pcie, is_cxl, spec_num, dev_id;
+static uint32_t sbus, sdev, sfunc, spec_offset[16], *reg_data, reg_value;
 static uint32_t check_value, err_num, enum_num;
 
 int usage(void)
@@ -459,8 +461,9 @@ int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
 	uint8_t nextpoint = 0;
 	uint32_t next = 0x100, num = 0;
 	uint16_t offset = 0, cap_value = 0;
+	int ret_result = 0;
 
-
+	spec_num = 0;
 	nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
 	if (nextpoint == 0xff) {
 		printf("PCI cap offset:%x is 0xff, addr:%p ptrdata:%x, return 2\n",
@@ -473,28 +476,34 @@ int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
 	if ((offset == 0) | (offset == 0xfff))
 		return 0;
 	if (cap_value == cap) {
-		spec_offset = next;
-		return 4;
+		spec_offset[spec_num] = next;
+		spec_num++;
+		ret_result = EXP_CAP;
 	}
 
 	while (1) {
 		num++;
 		cap_value = (uint16_t)(*(ptrdata + offset/4));
 		if (cap_value == cap) {
-			spec_offset = offset;
-			return 4;
+			spec_offset[spec_num] = offset;
+			spec_num++;
+			ret_result = EXP_CAP;
 		}
 		offset = (uint16_t)(*(ptrdata + offset/4) >> 20);
 		if (offset == 0)
 			break;
-		if (num > 21)
+		/* Same cap with cap_id should not more than 15 */
+		if (spec_num > 15)
+			break;
+		/* avoid offset is wrong and in infinite loop set the max loop 30 */
+		if (num > 30)
 			break;
 	}
 
-	return 0;
+	return ret_result;
 }
 
-int show_pcie_spec_reg(uint32_t offset, uint32_t size, int show)
+int show_pcie_spec_reg(uint32_t offset, uint32_t size, int show, int cap_id)
 {
 	uint32_t reg_offset = 0, get_size = 0xffffffff, left_off = 0;
 
@@ -504,7 +513,7 @@ int show_pcie_spec_reg(uint32_t offset, uint32_t size, int show)
 		get_size = ~get_size;
 	}
 
-	reg_offset = spec_offset + offset;
+	reg_offset = spec_offset[cap_id] + offset;
 	reg_value = (uint32_t)(*(reg_data + reg_offset/4));
 	left_off = reg_offset % 4;
 	if (left_off != 0) {
@@ -547,53 +556,68 @@ int contain_pcie_reg(uint32_t val)
 
 int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
 {
-	printf("Find cap %04x PCIe %02x:%02x.%x base_offset:%x.",
-			cap, sbus, sdev, sfunc, spec_offset);
-	if (((check_list >> 4) & 0x1) == 1) {
-		// Check vendor ID offset 4bytes, size 16bit
-		show_pcie_spec_reg((uint32_t)4, (uint32_t)16, 0);
-		if (verify_pcie_reg(CXL_VENDOR) | verify_pcie_reg(CXL_1_1_VENDOR)) {
-			printf("DVSEC vendor:%x.", reg_value);
-			// As definition of SPEC, upper 4bits of the CXL length should be 3
-			show_pcie_spec_reg((uint32_t)7, (uint32_t)4, 0);
-			if (verify_pcie_reg(3)) {
-				printf("CXL PCI.");
-				is_cxl = 1;
-			} else
-				printf("Not CXL DVSEC.");
-		} else
-			printf("Not CXL vendor:0x%x, actual vendor:%x.",
-				CXL_VENDOR, reg_value);
-	}
-	enum_num++;
-	show_pcie_spec_reg(offset, size, 1);
-	if (((check_list >> 5) & 0x1) == 1) {
-		if (verify_pcie_reg(check_value))
-			printf("Match as expected.");
-		else {
-			printf("reg_value:%x is not equal to check_value:%x.",
-				reg_value, check_value);
-			if (((check_list >> 4) & 0x1) == 1) {
-				if (is_cxl == 1)
-					err_num++;
-			} else
-				err_num++;
-		}
-	}
+	int i = 0, vendor = 0, dvsec_id = 0;
 
-	if (((check_list >> 6) & 0x1) == 1) {
-		if (contain_pcie_reg(check_value)) {
-			printf("reg_value:%x is not included by check_value:%x.",
-				reg_value, check_value);
-			if (((check_list >> 4) & 0x1) == 1) {
-				if (is_cxl == 1)
+	for (i = 0; i < spec_num; i++) {
+		if (i == 0)
+			printf("Find cap %04x PCIe %02x:%02x.%x, DEV:%04x base_offset:%03x.",
+				cap, sbus, sdev, sfunc, dev_id, spec_offset[i]);
+		else
+			printf("                                     base_offset:%x.",
+				spec_offset[i]);
+		
+		if (((check_list >> 4) & 0x1) == 1) {
+			/* Check vendor ID offset 4bytes, size 16bit */
+			show_pcie_spec_reg((uint32_t)4, (uint32_t)16, 0, i);
+			if (verify_pcie_reg(CXL_VENDOR) | verify_pcie_reg(CXL_1_1_VENDOR)) {
+				vendor = reg_value;
+				/* Check DVSEC ID in offset 8 bytes with size 16bit */
+				show_pcie_spec_reg((uint32_t)8, (uint32_t)16, 0, i);
+				dvsec_id = reg_value;
+				printf("DVSEC_vendor:%x. DVSEC_ID:%x.", vendor, dvsec_id);
+
+				if ( dvsec_id == 0) {
+					/* CXL: DVSEC ID 0 upper 4bits of the CXL length should be 3, len:0x38 */
+					show_pcie_spec_reg((uint32_t)7, (uint32_t)4, 0, i);
+					if (verify_pcie_reg(3)) {
+						printf("<CXL PCI> ");
+						is_cxl = 1;
+					}
+				}
+			} else
+				printf("Not CXL vendor:0x%x, actual vendor:%x.",
+					CXL_VENDOR, vendor);
+		}
+		enum_num++;
+		show_pcie_spec_reg(offset, size, 1, i);
+		if (((check_list >> 5) & 0x1) == 1) {
+			if (verify_pcie_reg(check_value))
+				printf("Match as expected.");
+			else {
+				printf("reg_value:%x is not equal to check_value:%x.",
+					reg_value, check_value);
+				if (((check_list >> 4) & 0x1) == 1) {
+					if (is_cxl == 1)
+						err_num++;
+				} else
+					err_num++;
+			}
+		}
+	
+		if (((check_list >> 6) & 0x1) == 1) {
+			if (contain_pcie_reg(check_value)) {
+				printf("reg_value:%x is not included by check_value:%x.",
+					reg_value, check_value);
+				if (((check_list >> 4) & 0x1) == 1) {
+					if (is_cxl == 1)
+						err_num++;
+				} else
 					err_num++;
 			} else
-				err_num++;
-		} else
-			printf("Include as expected.");
+				printf("Include as expected.");
+		}
+		printf("\n");
 	}
-	printf("\n");
 
 	return 0;
 }
@@ -621,7 +645,7 @@ int find_pcie_reg(uint16_t cap, uint32_t offset, uint32_t size)
 				addr = BASE_ADDR | (bus << 20) | (dev << 15) | (func << 12);
 				ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
 							MAP_SHARED, fd, addr);
-
+				/* If this bus:fun.dev is all FF will break and check next */
 				if (ptrdata == (void *)-1) {
 					munmap(ptrdata, LEN_SIZE);
 					break;
@@ -634,9 +658,11 @@ int find_pcie_reg(uint16_t cap, uint32_t offset, uint32_t size)
 						sdev = dev;
 						sfunc = func;
 						reg_data = ptrdata;
+						dev_id = *(ptrdata) >> 16;
 						is_cxl = 0;
 						check_pcie_register(cap, offset, size);
 					} else if (result == 2) {
+						/* This PCIe ended with unknow CAP ff so mark it */
 						printf("%02x:%02x.%x debug:'pcie_check a %x %x %x'\n",
 								bus, dev, func, bus, dev, func);
 						munmap(ptrdata, LEN_SIZE);
