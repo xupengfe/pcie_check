@@ -565,7 +565,7 @@ int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
 		else
 			printf("                                     base_offset:%x.",
 				spec_offset[i]);
-		
+
 		if (((check_list >> 4) & 0x1) == 1) {
 			/* Check vendor ID offset 4bytes, size 16bit */
 			show_pcie_spec_reg((uint32_t)4, (uint32_t)16, 0, i);
@@ -603,7 +603,7 @@ int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
 					err_num++;
 			}
 		}
-	
+
 		if (((check_list >> 6) & 0x1) == 1) {
 			if (contain_pcie_reg(check_value)) {
 				printf("reg_value:%x is not included by check_value:%x.",
