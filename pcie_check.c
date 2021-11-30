@@ -560,7 +560,7 @@ int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
 
 	for (i = 0; i < spec_num; i++) {
 		if (i == 0)
-			printf("Find cap %04x PCIe %02x:%02x.%x, DEV:%04x base_offset:%03x.",
+			printf("Find cap %04x PCIe %02x:%02x.%x DEV:%04x base_offset:%03x.",
 				cap, sbus, sdev, sfunc, dev_id, spec_offset[i]);
 		else
 			printf("                                     base_offset:%x.",
