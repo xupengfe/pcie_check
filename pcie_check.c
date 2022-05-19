@@ -91,6 +91,7 @@ int find_bar(void)
 
 	if (find != 1) {
 		printf("Could not find correct mmio base address:%d, exit.\n", find);
+		printf("Make sure to remove CONFIG_IO_STRICT_DEVMEM in kconfig!\n");
 		exit(2);
 	}
 #endif
@@ -729,6 +730,7 @@ int main(int argc, char *argv[])
 	uint32_t bus, dev, func, offset, size;
 	uint16_t cap;
 
+	printf("Remove CONFIG_IO_STRICT_DEVMEM in kconfig when all result 0.\n");
 	if (argc == 2) {
 		if (sscanf(argv[1], "%c", &parm) != 1) {
 			printf("Invalid parm:%c\n", parm);
