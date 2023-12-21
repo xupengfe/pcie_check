@@ -14,7 +14,8 @@ find_cxl_pcie() {
   [[ -e "$CXL3_LIST_FILE" ]] && mv "$CXL3_LIST_FILE" "${CXL3_LIST_FILE}_old"
   cat /dev/null > "$CXL_LIST_FILE"
   cat /dev/null > "$CXL3_LIST_FILE"
-  pcie_list=$(lspci -v | grep -B 50 "Vendor-Specific" | grep "^0" | cut -d " " -f 1)
+  # CXL3.0 spec 8.1.3 PCIe DVSEC for CXL Devices page374: DVSEC ID for CXL:1E98h
+  pcie_list=$(lspci -v | grep -i -B 50 "Specific: Vendor=1e98" | grep "^0" | cut -d " " -f 1)
 
   for pcie in $pcie_list; do
     is_cxl=$(lspci -v -s "$pcie" | grep -i "$DVSEC_INFO")
