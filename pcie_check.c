@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PCIE/PCI info and capability check functions
+ *
+ * Author: Xu, Pengfei <pengfei.xu@intel.com>
+ *
  */
 
 #include <stdio.h>
@@ -22,6 +25,10 @@
 #define CXL_1_1_VENDOR 0x8086
 #define LEN_SIZE sizeof(unsigned long)
 #define MAPS_LINE_LEN 128
+/*
+ * (4096 - 256)/32=120, PCIe caps in one PCIe should not more than 120
+ */
+#define PCIE_CAP_CHECK_MAX 120
 
 #define EXP_CAP 4
 
@@ -246,8 +253,8 @@ int check_pcie(uint32_t *ptrdata)
 				break;
 			}
 			printf("cap:%04x ver:%01x off:%03x|", cap, ver, offset);
-			if (num > 21) {
-				printf("PCIE num is more than 20, return\n");
+			if (num > PCIE_CAP_CHECK_MAX) {
+				printf("PCIE num is more than %d, return\n", PCIE_CAP_CHECK_MAX);
 				break;
 			}
 		}
