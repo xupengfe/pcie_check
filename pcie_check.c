@@ -59,13 +59,56 @@ int usage(void)
 	exit(2);
 }
 
+unsigned long find_base_from_dmesg(void)
+{
+	FILE *fp;
+	unsigned long base_addr = 0;
+	char result[256];
+	const char *cmd = "dmesg | grep 'MMIO range' | head -n 1";
+	char *start;
+
+	fp = popen(cmd, "r");
+	if (fp == NULL) {
+		printf("Failed to run dmesg command by popen\n" );
+		if (pclose(fp) == -1) {
+			perror("pclose failed");
+			return base_addr;
+		}
+		return base_addr;
+	}
+
+	if (fgets(result, sizeof(result), fp) != NULL) {
+		start = strstr(result, "[0x");
+		if (start) {
+			sscanf(start, "[0x%lx-", &base_addr);
+			printf("MMIO BASE from dmesg:0x%lx\n", base_addr);
+		} else {
+			printf("No MMIO range in dmesg:0x%lx\n", base_addr);
+		}
+	} else {
+		printf("Failed to read dmesg command by fgets\n" );
+		if (pclose(fp) == -1) {
+			perror("pclose failed");
+			return base_addr;
+		}
+		return base_addr;
+	}
+
+	if (pclose(fp) == -1) {
+		perror("pclose failed");
+		return base_addr;
+	}
+
+	return base_addr;
+}
+
 int find_bar(void)
 {
 #ifdef __x86_64__
-	FILE * maps;
+	FILE *maps;
 	int find = 0;
 	unsigned long *start = malloc(sizeof(unsigned long) * 5);
-	char line[MAPS_LINE_LEN], name1[MAPS_LINE_LEN];
+	char line[MAPS_LINE_LEN], base_end[MAPS_LINE_LEN];
 	char *mmio_bar = "MMCONFIG";
 
 	printf("Try to open /proc/iomem\n");
@@ -80,10 +123,10 @@ int find_bar(void)
 			continue;
 
 		if (sscanf(line, "%p-%s",
-				&start, name1) != 2) {
+				&start, base_end) != 2) {
 			continue;
 			}
-		printf("start:%p, name1:%s\n", start, name1);
+		printf("start:%p, base_end:%s\n", start, base_end);
 		if (!start) {
 			printf("BAR(start) is NULL, did you use root to execute?\n");
 			exit(1);
@@ -93,13 +136,16 @@ int find_bar(void)
 		find = 1;
 		break;
 	}
-
 	fclose(maps);
 
 	if (find != 1) {
-		printf("Could not find correct mmio base address:%d, exit.\n", find);
-		printf("Make sure to remove CONFIG_IO_STRICT_DEVMEM in kconfig!\n");
-		exit(2);
+		printf("Could not find mmio base MMCONFIG:%d in /proc/iomem\n", find);
+		printf("Check kconfig CONFIG_IO_STRICT_DEVMEM or v6.9 or newer kernel!\n");
+		BASE_ADDR=find_base_from_dmesg();
+		if (BASE_ADDR == 0) {
+			printf("No MMIO range in dmesg, maybe dmesg cleared, check acpidump.\n");
+			exit(2);
+		}
 	}
 #endif
 	return 0;
@@ -737,7 +783,6 @@ int main(int argc, char *argv[])
 	uint32_t bus, dev, func, offset, size;
 	uint16_t cap;
 
-	// Should set kconfig CONFIG_X86_PAT=n and set CONFIG_EXPERT=y
 	printf("Remove CONFIG_IO_STRICT_DEVMEM in kconfig when all result 0.\n");
 	if (argc == 2) {
 		if (sscanf(argv[1], "%c", &parm) != 1) {
