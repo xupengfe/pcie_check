@@ -64,7 +64,7 @@ unsigned long find_base_from_dmesg(void)
 	FILE *fp;
 	unsigned long base_addr = 0;
 	char result[256];
-	const char *cmd = "dmesg | grep 'MMIO range' | head -n 1";
+	const char *cmd = "dmesg | grep 'MMIO range' | grep 'Remove' | head -n 1";
 	char *start;
 
 	fp = popen(cmd, "r");
