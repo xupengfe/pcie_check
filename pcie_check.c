@@ -32,7 +32,7 @@
 
 #define EXP_CAP 4
 
-static unsigned long BASE_ADDR;
+static unsigned long BASE_ADDR = 0;
 static int check_list, is_pcie, is_cxl, spec_num, dev_id;
 static uint32_t sbus, sdev, sfunc, spec_offset[16], reg_value;
 static uint32_t *reg_data, ptr_content = 0xffffffff;
@@ -87,7 +87,46 @@ unsigned long find_base_from_dmesg(void)
 			printf("No MMIO range in dmesg:0x%lx\n", base_addr);
 		}
 	} else {
-		printf("Failed to read dmesg command by fgets\n" );
+		printf("No useful MMIO info in dmesg.\n" );
+		if (pclose(fp) == -1) {
+			perror("pclose failed");
+			return base_addr;
+		}
+		return base_addr;
+	}
+
+	if (pclose(fp) == -1) {
+		perror("pclose failed");
+		return base_addr;
+	}
+
+	return base_addr;
+}
+
+unsigned long find_base_from_mcfg(void)
+{
+	FILE *fp;
+	unsigned long base_addr = 0;
+	// 16 chars actually and 64 is enough
+	char result[64];
+	const char *cmd = "a=$(hexdump $(ls /sys/firmware/acpi/tables/MCFG* | head -n 1) | grep 000030 | awk '{print $3 $2}')"
+                  "$(hexdump $(ls /sys/firmware/acpi/tables/MCFG* | head -n 1) | grep 000020 | awk '{print $9 $8}');"
+                  "echo $a";
+	fp = popen(cmd, "r");
+	if (fp == NULL) {
+		printf("Failed to run dmesg command by popen\n" );
+		if (pclose(fp) == -1) {
+			perror("pclose failed");
+			return base_addr;
+		}
+		return base_addr;
+	}
+
+	if (fgets(result, sizeof(result), fp) != NULL) {
+		sscanf(result, "%lx", &base_addr);
+		printf("MMIO BASE from sysfs mcfg:0x%lx\n", base_addr);
+	} else {
+		printf("Failed to read mcfg sysfs by fgets\n" );
 		if (pclose(fp) == -1) {
 			perror("pclose failed");
 			return base_addr;
@@ -107,12 +146,11 @@ int find_bar(void)
 {
 #ifdef __x86_64__
 	FILE *maps;
-	int find = 0;
 	unsigned long *start = malloc(sizeof(unsigned long) * 5);
 	char line[MAPS_LINE_LEN], base_end[MAPS_LINE_LEN];
 	char *mmio_bar = "MMCONFIG";
 
-	printf("Try to open /proc/iomem\n");
+	//printf("Try to open /proc/iomem\n");
 	maps = fopen("/proc/iomem", "r");
 	if (!maps) {
 		printf("[WARN]\tCould not open /proc/iomem\n");
@@ -134,18 +172,19 @@ int find_bar(void)
 		}
 		printf("BAR(Base Address Register) for mmio MMCONFIG:%p\n", start);
 		BASE_ADDR = (unsigned long)start;
-		find = 1;
 		break;
 	}
 	fclose(maps);
 
-	if (find != 1) {
-		printf("Could not find mmio base MMCONFIG:%d in /proc/iomem\n", find);
-		printf("Check kconfig CONFIG_IO_STRICT_DEVMEM or v6.9 or newer kernel!\n");
+	if (BASE_ADDR == 0) {
+		//printf("Check kconfig CONFIG_IO_STRICT_DEVMEM or v6.9 or newer kernel!\n");
 		BASE_ADDR=find_base_from_dmesg();
 		if (BASE_ADDR == 0) {
-			printf("No MMIO range in dmesg, maybe dmesg cleared, check acpidump.\n");
-			exit(2);
+			BASE_ADDR=find_base_from_mcfg();
+			if (BASE_ADDR == 0) {
+				printf("No MMIO range in dmesg, /proc/iomem and mcfg, check acpidump.\n");
+				exit(2);
+			}
 		}
 	}
 #endif
