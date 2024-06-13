@@ -675,8 +675,12 @@ int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
 				printf("DVSEC_vendor:%x. DVSEC_ID:%x.", vendor, dvsec_id);
 
 				if ( dvsec_id == 0) {
-					/* CXL: DVSEC ID 0 upper 4bits of the CXL length should be 3, len:0x38 */
-					show_pcie_spec_reg((uint32_t)7, (uint32_t)4, 0, i);
+					/*
+					 * CXL1.1/2.0: DVSEC ID 0 upper 8bits of the CXL length should be 03, len:0x38
+					 * CXL3.0: DVSEC ID 0 byte offset 7 of CXL length should be 03, len:0x3C
+					 * CXL3.0 sample: 23 00 c1 3a 98 1e c2 03
+					 */
+					show_pcie_spec_reg((uint32_t)7, (uint32_t)8, 0, i);
 					if (verify_pcie_reg(3)) {
 						printf("<CXL PCI> ");
 						is_cxl = 1;
