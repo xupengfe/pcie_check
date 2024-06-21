@@ -34,6 +34,7 @@
 
 static unsigned long BASE_ADDR = 0;
 static int check_list, is_pcie, is_cxl, spec_num, dev_id;
+static uint8_t pci_offset;
 static uint32_t sbus, sdev, sfunc, spec_offset[16], reg_value;
 static uint32_t *reg_data, ptr_content = 0xffffffff;
 static uint32_t check_value, err_num, enum_num;
@@ -45,7 +46,7 @@ int usage(void)
 	printf("a    Show all PCI and PCIE info\n");
 	printf("c    Check cap register:c 23 8 4 means cap:0x23 offset:8bytes size:4bit\n");
 	printf("s    Show all PCi and PCIE speed and bandwidth\n");
-	printf("i    Show all or specific PCI info\n");
+	printf("i    Show all or specific PCI info: i 10 c 4\n");
 	printf("I    Show all or specific PCI and binary info\n");
 	printf("e    Show all or specific PCIE info\n");
 	printf("x    Only check CXL related registers:x 4 16 1e98\n");
@@ -564,8 +565,10 @@ int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
 	spec_num = 0;
 	nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
 	if (nextpoint == 0xff) {
-		printf("PCI cap offset:%x is 0xff, addr:%p ptrdata:%x, return 2\n",
-			PCI_CAP_START, ptrdata, *ptrdata);
+		/* For debug
+		 * printf("PCI cap offset:%x is 0xff, addr:%p ptrdata:%x, return 2\n",
+		 *	PCI_CAP_START, ptrdata, *ptrdata);
+		 */
 		return 2;
 	}
 
@@ -826,6 +829,166 @@ int specific_pcie_check(uint16_t cap, uint32_t offset, uint32_t size)
 	return 0;
 }
 
+int specific_pci_cap(uint32_t *ptrdata, uint8_t cap)
+{
+	uint8_t nextpoint = 0;
+	uint32_t *ptrsearch;
+	uint8_t num = 0, offset = 0, cap_value = 0;
+	int ret_result = 0;
+
+	nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
+
+	if ((nextpoint == 0) | (nextpoint == 0xff)) {
+		return 2;
+	}
+	ptrsearch = ptrdata + nextpoint/4;
+
+	while (1) {
+		cap_value = (uint8_t)(*ptrsearch);
+		if (cap_value == 0) {
+			ret_result = 2;
+			break;
+		}
+
+		if (cap_value == cap) {
+			pci_offset = nextpoint;
+			ret_result = 0;
+			break;
+		}
+		nextpoint = (uint8_t)(((*ptrsearch) >> 8) & 0xff);
+		ptrsearch = ptrdata + ((uint8_t)(((*ptrsearch) >> 8) & 0x00ff))/4;
+		if ((offset == 0) | (offset == 0xff)) {
+			ret_result = 2;
+			break;
+		}
+		num++;
+		/* avoid offset is wrong and in infinite loop set the max loop 16 */
+		if (num >= 16) {
+			ret_result = 1;
+			break;
+		}
+	}
+
+	return ret_result;
+}
+
+int show_pci_spec_reg(uint8_t offset, uint32_t size, int show)
+{
+	uint32_t reg_offset = 0, get_size = 0xffffffff, left_off = 0;
+
+	if (size != 32) {
+		get_size = get_size >> size;
+		get_size = get_size << size;
+		get_size = ~get_size;
+	}
+
+	reg_offset = pci_offset + offset;
+	reg_value = (uint32_t)(*(reg_data + reg_offset/4));
+	left_off = reg_offset % 4;
+	if (left_off != 0) {
+		//printf("(left:%dbyte)", left_off);
+		reg_value = reg_value >> (left_off * 8);
+	}
+	reg_value = reg_value & get_size;
+	if (((check_list >> 7) & 0x1) == 1) {
+		*(reg_data + reg_offset/4) = check_value << (left_off * 8);
+		printf(" Reg_offset:%x, size:%dbit, reg_value:%x->0x%x addr:%p",
+			reg_offset, size, reg_value,
+			(uint32_t)(((*(reg_data + reg_offset/4) >> (left_off * 8))
+				& get_size)),
+			reg_data + reg_offset/4 + reg_offset%4);
+	} else if (show)
+		printf(" Reg_offset:%x, size:%dbit, reg_value:%x.",
+			reg_offset, size, reg_value);
+
+	return 0;
+}
+
+int check_pci_register(uint8_t cap, uint8_t offset, uint32_t size)
+{
+	printf("Find cap 0x%02x PCI %02x:%02x.%x DEV:%04x pci_offset:%02x.",
+		cap, sbus, sdev, sfunc, dev_id, pci_offset);
+
+	show_pci_spec_reg(offset, size, 1);
+	if (((check_list >> 5) & 0x1) == 1) {
+		if (verify_pcie_reg(check_value))
+			printf("Match as expected.");
+		else {
+			printf("reg_value:%x is not equal to check_value:%x.",
+				reg_value, check_value);
+			err_num++;
+		}
+	}
+	if (((check_list >> 6) & 0x1) == 1) {
+		if (contain_pcie_reg(check_value)) {
+			printf("reg_value:%x is not included by check_value:%x.",
+				reg_value, check_value);
+			err_num++;
+		} else
+			printf("Include as expected.");
+	}
+	printf("\n");
+
+	return 0;
+}
+
+int find_pci_reg(uint16_t cap, uint32_t offset, uint32_t size)
+{
+	uint64_t addr = 0;
+	uint32_t *ptrdata = malloc(sizeof(unsigned long) * 4096);
+	uint32_t bus, dev, func;
+	int fd, result = 0;
+
+	printf("PCI specific register-> cap:0x%04x, offset:0x%x, size:%dbit:\n",
+		cap, offset, size);
+
+	fd = open("/dev/mem", O_RDWR);
+	if (fd < 0) {
+		printf("open /dev/mem failed!\n");
+		return -1;
+	}
+
+	ptrdata = &ptr_content;
+	for (bus = 0; bus < MAX_BUS; ++bus) {
+		for (dev = 0; dev < MAX_DEV; ++dev) {
+			for (func = 0; func < MAX_FUN; ++func) {
+				addr = BASE_ADDR | (bus << 20) | (dev << 15) | (func << 12);
+				ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
+							MAP_SHARED, fd, addr);
+				/* If this bus:fun.dev is all FF will break and check next */
+				if (ptrdata == (void *)-1) {
+					munmap(ptrdata, LEN_SIZE);
+					break;
+				}
+
+				if ((*ptrdata != ptr_content) && (*ptrdata != 0)) {
+					result = specific_pci_cap(ptrdata, (uint8_t)cap);
+					if (result == 0) {
+						sbus = bus;
+						sdev = dev;
+						sfunc = func;
+						reg_data = ptrdata;
+						dev_id = *(ptrdata) >> 16;
+						is_cxl = 0;
+						enum_num++;
+						check_pci_register((uint8_t)cap, (uint8_t)offset, size);
+					} else if (result == 1) {
+						/* This PCI ended with unknow CAP ff so mark it */
+						printf("%02x:%02x.%x debug:'pcie_check a %x %x %x'\n",
+								bus, dev, func, bus, dev, func);
+						munmap(ptrdata, LEN_SIZE);
+						close(fd);
+						return 2;
+					}
+				}
+				munmap(ptrdata, LEN_SIZE);
+			}
+		}
+	}
+	close(fd);
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	char parm;
@@ -877,6 +1040,7 @@ int main(int argc, char *argv[])
 		switch (parm) {
 		case 'i':
 			is_pcie = 0;
+			check_list = (check_list | 0x8);
 			break;
 		case 'I':
 			is_pcie = 0;
@@ -937,10 +1101,17 @@ int main(int argc, char *argv[])
 				printf("Invalid size:%d", size);
 				usage();
 			}
-			if (argc == 5) {
+			if ((argc == 5) && (parm != 'i')) {
 				find_pcie_reg(cap, offset, size);
 				if (enum_num == 0) {
 					printf("No cap:0x%x PCI/PCIe found\n", cap);
+					err_num = 1;
+				}
+				return err_num;
+			} else if ((argc == 5) && (parm == 'i')) {
+				find_pci_reg(cap, offset, size);
+				if (enum_num == 0) {
+					printf("No cap:0x%x PCI found\n", cap);
 					err_num = 1;
 				}
 				return err_num;
