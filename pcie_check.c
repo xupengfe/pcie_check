@@ -77,10 +77,6 @@ unsigned long find_base_from_dmesg(void)
 	fp = popen(cmd, "r");
 	if (!fp) {
 		printf("Failed to run dmesg command by popen\n");
-		if (pclose(fp) == -1) {
-			perror("pclose failed");
-			return base_addr;
-		}
 		return base_addr;
 	}
 
