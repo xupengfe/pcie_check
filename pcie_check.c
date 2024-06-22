@@ -32,12 +32,17 @@
 
 #define EXP_CAP 4
 
-static unsigned long BASE_ADDR = 0;
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+static unsigned long BASE_ADDR;
 static int check_list, is_pcie, is_cxl, spec_num, dev_id;
-static uint8_t pci_offset;
-static uint32_t sbus, sdev, sfunc, spec_offset[16], reg_value;
-static uint32_t *reg_data, ptr_content = 0xffffffff;
-static uint32_t check_value, err_num, enum_num;
+static u8 pci_offset;
+static u32 sbus, sdev, sfunc, spec_offset[16], reg_value;
+static u32 *reg_data, ptr_content = 0xffffffff;
+static u32 check_value, err_num, enum_num;
 
 int usage(void)
 {
@@ -70,8 +75,8 @@ unsigned long find_base_from_dmesg(void)
 	char *start;
 
 	fp = popen(cmd, "r");
-	if (fp == NULL) {
-		printf("Failed to run dmesg command by popen\n" );
+	if (!fp) {
+		printf("Failed to run dmesg command by popen\n");
 		if (pclose(fp) == -1) {
 			perror("pclose failed");
 			return base_addr;
@@ -79,16 +84,18 @@ unsigned long find_base_from_dmesg(void)
 		return base_addr;
 	}
 
-	if (fgets(result, sizeof(result), fp) != NULL) {
+	if (fgets(result, sizeof(result), fp)) {
 		start = strstr(result, "[0x");
 		if (start) {
-			sscanf(start, "[0x%lx-", &base_addr);
-			printf("MMIO BASE from dmesg:0x%lx\n", base_addr);
+			if (sscanf(start, "[0x%lx-", &base_addr) == 1)
+				printf("MMIO BASE from dmesg:0x%lx\n", base_addr);
+			else
+				printf("No MMIO BASE from dmesg:0x%lx\n", base_addr);
 		} else {
 			printf("No MMIO range in dmesg:0x%lx\n", base_addr);
 		}
 	} else {
-		printf("No useful MMIO info in dmesg.\n" );
+		printf("No useful MMIO info in dmesg.\n");
 		if (pclose(fp) == -1) {
 			perror("pclose failed");
 			return base_addr;
@@ -110,24 +117,23 @@ unsigned long find_base_from_mcfg(void)
 	unsigned long base_addr = 0;
 	// 16 chars actually and 64 is enough
 	char result[64];
-	const char *cmd = "a=$(hexdump $(ls /sys/firmware/acpi/tables/MCFG* | head -n 1) | grep 000030 | awk '{print $3 $2}')"
-                  "$(hexdump $(ls /sys/firmware/acpi/tables/MCFG* | head -n 1) | grep 000020 | awk '{print $9 $8}');"
-                  "echo $a";
+	const char *cmd = "b=$(ls /sys/firmware/acpi/tables/MCFG* | head -n 1);"
+			"a=$(hexdump $b | grep 000030 | awk '{print $3 $2}');"
+			"a+=$(hexdump $b | grep 000020 | awk '{print $9 $8}');"
+			"echo $a";
 	fp = popen(cmd, "r");
-	if (fp == NULL) {
-		printf("Failed to run dmesg command by popen\n" );
-		if (pclose(fp) == -1) {
-			perror("pclose failed");
-			return base_addr;
-		}
+	if (!fp) {
+		printf("Failed to run cmd command by popen\n");
 		return base_addr;
 	}
 
-	if (fgets(result, sizeof(result), fp) != NULL) {
-		sscanf(result, "%lx", &base_addr);
-		printf("MMIO BASE from sysfs mcfg:0x%lx\n", base_addr);
+	if (fgets(result, sizeof(result), fp)) {
+		if (sscanf(result, "%lx", &base_addr) == 1)
+			printf("MMIO BASE from sysfs mcfg:0x%lx\n", base_addr);
+		else
+			printf("No MMIO BASE from sysfs mcfg:0x%lx\n", base_addr);
 	} else {
-		printf("Failed to read mcfg sysfs by fgets\n" );
+		printf("Failed to read mcfg sysfs by fgets\n");
 		if (pclose(fp) == -1) {
 			perror("pclose failed");
 			return base_addr;
@@ -162,10 +168,9 @@ int find_bar(void)
 		if (!strstr(line, mmio_bar))
 			continue;
 
-		if (sscanf(line, "%p-%s",
-				&start, base_end) != 2) {
+		if (sscanf(line, "%p-%s", &start, base_end) != 2)
 			continue;
-			}
+
 		printf("start:%p, base_end:%s\n", start, base_end);
 		if (!start) {
 			printf("BAR(start) is NULL, did you use root to execute?\n");
@@ -179,11 +184,11 @@ int find_bar(void)
 
 	if (BASE_ADDR == 0) {
 		//printf("Check kconfig CONFIG_IO_STRICT_DEVMEM or v6.9 or newer kernel!\n");
-		BASE_ADDR=find_base_from_dmesg();
+		BASE_ADDR = find_base_from_dmesg();
 		if (BASE_ADDR == 0) {
-			BASE_ADDR=find_base_from_mcfg();
+			BASE_ADDR = find_base_from_mcfg();
 			if (BASE_ADDR == 0) {
-				printf("No MMIO range in dmesg, /proc/iomem and mcfg, check acpidump.\n");
+				printf("No MMIO in dmesg, /proc/iomem and mcfg, check acpidump.\n");
 				exit(2);
 			}
 		}
@@ -192,7 +197,7 @@ int find_bar(void)
 	return 0;
 }
 
-void typeshow(uint8_t data)
+void typeshow(u8 data)
 {
 	printf("\tpcie type:%02x  - ", data);
 	switch (data) {
@@ -229,7 +234,7 @@ void typeshow(uint8_t data)
 	}
 }
 
-void speedshow(uint8_t speed)
+void speedshow(u8 speed)
 {
 	printf("\tspeed: %x   - ", speed);
 	switch (speed) {
@@ -249,7 +254,7 @@ void speedshow(uint8_t speed)
 	printf("\n");
 }
 
-void linkspeed(uint8_t speed)
+void linkspeed(u8 speed)
 {
 	printf("\tlink speed:%x   - ", speed);
 	switch (speed) {
@@ -281,7 +286,7 @@ void linkspeed(uint8_t speed)
 	printf("\n");
 }
 
-void linkwidth(uint8_t width)
+void linkwidth(u8 width)
 {
 	printf("\tlink width:%02x - ", width);
 	switch (width) {
@@ -313,16 +318,17 @@ void linkwidth(uint8_t width)
 	printf("\n");
 }
 
-int check_pcie(uint32_t *ptrdata)
+int check_pcie(u32 *ptrdata)
 {
-	uint8_t ver = 0;
-	uint32_t next = 0x100, num = 0;
-	uint16_t offset = 0, cap = 0;
+	u8 ver = 0;
+	u32 next = 0x100, num = 0;
+	u16 offset = 0, cap = 0;
 
 	if (is_pcie == 1) {
-		cap = (uint16_t)(*(ptrdata + next/4));
-		offset = (uint16_t)(*(ptrdata + next/4) >> 20);
-		ver = (uint8_t)((*(ptrdata + next/4) >> 16) & 0xf);
+		cap = (u16)(*(ptrdata + next / 4));
+		offset = (u16)(*(ptrdata + next / 4) >> 20);
+		ver = (u8)((*(ptrdata + next / 4) >> 16) & 0xf);
+		// Compile will warning: warning: suggest parentheses around comparison...
 		if ((offset == 0) | (offset == 0xfff)) {
 			printf("PCIE cap:%04x ver:%01x off:%03x|\n", cap, ver, offset);
 			return 0;
@@ -331,9 +337,9 @@ int check_pcie(uint32_t *ptrdata)
 
 		while (1) {
 			num++;
-			cap = (uint16_t)(*(ptrdata + offset/4));
-			ver = (uint8_t)((*(ptrdata + offset/4) >> 16) & 0xf);
-			offset = (uint16_t)(*(ptrdata + offset/4) >> 20);
+			cap = (u16)(*(ptrdata + offset / 4));
+			ver = (u8)((*(ptrdata + offset / 4) >> 16) & 0xf);
+			offset = (u16)(*(ptrdata + offset / 4) >> 20);
 
 			if (offset == 0) {
 				printf("cap:%04x ver:%01x off:%03x|\n", cap, ver, offset);
@@ -351,33 +357,32 @@ int check_pcie(uint32_t *ptrdata)
 	return 0;
 }
 
-int check_pci(uint32_t *ptrdata)
+int check_pci(u32 *ptrdata)
 {
-	uint8_t nextpoint = 0x34;
-	uint32_t num = 0;
-	uint32_t *ptrsearch;
+	u8 nextpoint = 0x34;
+	u32 num = 0;
+	u32 *ptrsearch;
 
-	nextpoint = (uint8_t)(*(ptrdata + nextpoint/4));
-	ptrsearch = ptrdata + nextpoint/4;
+	nextpoint = (u8)(*(ptrdata + nextpoint / 4));
+	ptrsearch = ptrdata + nextpoint / 4;
 
 	if ((nextpoint == 0) | (nextpoint == 0xff)) {
 		printf("off:0x34->%02x|\n", nextpoint);
 		return 0;
 	}
-	printf("off:0x34->%02x cap:%02x|",
-			nextpoint, (uint8_t)(*ptrsearch));
+	printf("off:0x34->%02x cap:%02x|", nextpoint, (u8)(*ptrsearch));
 
 	while (1) {
-		if ((uint8_t)((*ptrsearch) >> 8) == 0x00) {
-			printf("off:%02x|", (uint8_t)((*ptrsearch) >> 8));
+		if ((u8)((*ptrsearch) >> 8) == 0x00) {
+			printf("off:%02x|", (u8)((*ptrsearch) >> 8));
 			break;
 		}
 		if (num >= 16)
 			break;
 
-		printf("off:%02x ", (uint8_t)(((*ptrsearch) >> 8) & 0x00ff));
-		ptrsearch = ptrdata + ((uint8_t)(((*ptrsearch) >> 8) & 0x00ff))/4;
-		printf("cap:%02x|", (uint8_t)(*ptrsearch));
+		printf("off:%02x ", (u8)(((*ptrsearch) >> 8) & 0x00ff));
+		ptrsearch = ptrdata + ((u8)(((*ptrsearch) >> 8) & 0x00ff)) / 4;
+		printf("cap:%02x|", (u8)(*ptrsearch));
 		num++;
 	}
 
@@ -390,10 +395,10 @@ int check_pci(uint32_t *ptrdata)
 	return 0;
 }
 
-int pci_show(uint32_t bus, uint32_t dev, uint32_t fun)
+int pci_show(u32 bus, u32 dev, u32 fun)
 {
-	uint32_t *ptrdata = malloc(sizeof(unsigned long) * 4096);
-	uint64_t addr = 0;
+	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096);
+	u64 addr = 0;
 	int fd, offset;
 
 	fd = open("/dev/mem", O_RDWR);
@@ -406,9 +411,8 @@ int pci_show(uint32_t bus, uint32_t dev, uint32_t fun)
 		find_bar();
 
 	addr = BASE_ADDR | (bus << 20) | (dev << 15) | (fun << 12);
-	ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
-				MAP_SHARED, fd, addr);
-	// Debug
+	ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, addr);
+
 	printf("Offset addr:%lx, *ptrdata:%x, LEN_SIZE:%lx\n", addr, *ptrdata, LEN_SIZE);
 	if ((*ptrdata != ptr_content) && (*ptrdata != 0)) {
 		printf("%02x:%02x.%01x:", bus, dev, fun);
@@ -417,19 +421,19 @@ int pci_show(uint32_t bus, uint32_t dev, uint32_t fun)
 			for (offset = 0; offset < 64; offset++) {
 				if (offset % 4 == 0)
 					printf("\n%02x: ", offset * 4);
-				printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 0));
-				printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 8));
-				printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 16));
-				printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 24));
+				printf("%02x ", (u8)(*(ptrdata + offset) >> 0));
+				printf("%02x ", (u8)(*(ptrdata + offset) >> 8));
+				printf("%02x ", (u8)(*(ptrdata + offset) >> 16));
+				printf("%02x ", (u8)(*(ptrdata + offset) >> 24));
 			}
 			if (is_pcie == 1) {
 				for (offset = 64; offset < 1024; offset++) {
 					if (offset % 4 == 0)
 						printf("\n%02x: ", offset * 4);
-					printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 0));
-					printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 8));
-					printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 16));
-					printf("%02x ", (uint8_t)(*(ptrdata + offset) >> 24));
+					printf("%02x ", (u8)(*(ptrdata + offset) >> 0));
+					printf("%02x ", (u8)(*(ptrdata + offset) >> 8));
+					printf("%02x ", (u8)(*(ptrdata + offset) >> 16));
+					printf("%02x ", (u8)(*(ptrdata + offset) >> 24));
 				}
 			}
 			printf("\n");
@@ -438,48 +442,48 @@ int pci_show(uint32_t bus, uint32_t dev, uint32_t fun)
 			check_pcie(ptrdata);
 		else
 			check_pci(ptrdata);
-	} else
+	} else {
 		printf("*ptrdata:%x, which is 0 or %x, ptrdata:%p, return\n",
-			*ptrdata, ptr_content, ptrdata);
+		       *ptrdata, ptr_content, ptrdata);
+	}
 	munmap(ptrdata, LEN_SIZE);
 	close(fd);
 	return 0;
 }
 
-int recognize_pcie(uint32_t *ptrdata)
+int recognize_pcie(u32 *ptrdata)
 {
 	int loop_num = 0;
-	uint8_t nextpoint;
-	uint32_t *ptrsearch;
+	u8 nextpoint;
+	u32 *ptrsearch;
 
 	is_pcie = 0;
 	/* 0x34/4 is capability pointer in PCI */
-	nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
+	nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
 
 	if (nextpoint == 0)
 		return 0;
 
-	ptrsearch = ptrdata + nextpoint/4;
+	ptrsearch = ptrdata + nextpoint / 4;
 	while (1) {
 		/* 0x10 means PCIE capability */
-		if ((uint8_t)(*ptrsearch) == 0x10) {
+		if ((u8)(*ptrsearch) == 0x10) {
 			is_pcie = 1;
 			break;
 		}
-		if ((uint8_t)(*ptrsearch) == 0xff) {
+		if ((u8)(*ptrsearch) == 0xff) {
 			printf("*ptrsearch:%x offset is 0xff, ptrsearch:%p, ptrdata:%p\n",
-				*ptrsearch, ptrsearch, ptrdata);
+			       *ptrsearch, ptrsearch, ptrdata);
 			return 2;
 		}
 
 		/* no PCIE find */
-		if ((uint8_t)((*ptrsearch) >> 8) == 0x00)
+		if ((u8)((*ptrsearch) >> 8) == 0x00)
 			break;
 		if (loop_num >= 16)
 			break;
 		/* next capability */
-		ptrsearch = ptrdata + ((uint8_t)(((*ptrsearch) >> 8)
-				& 0x00ff))/4;
+		ptrsearch = ptrdata + ((u8)(((*ptrsearch) >> 8)	& 0x00ff)) / 4;
 		loop_num++;
 	}
 	return 0;
@@ -488,11 +492,11 @@ int recognize_pcie(uint32_t *ptrdata)
 int scan_pci(void)
 {
 	// Must be 64bit address for 64bit OS!
-	uint64_t addr = 0;
-	uint32_t bus, dev, fun;
+	u64 addr = 0;
+	u32 bus, dev, fun;
 	// Must 32bit for data check!
-	uint32_t *ptrdata = malloc(sizeof(unsigned long) * 4096), *ptrsearch;
-	uint8_t nextpoint;
+	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096), *ps;
+	u8 nextpoint;
 
 	int fd;
 
@@ -511,7 +515,7 @@ int scan_pci(void)
 				addr = BASE_ADDR | (bus << 20) | (dev << 15) | (fun << 12);
 
 				ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
-							MAP_SHARED, fd, addr);
+					       MAP_SHARED, fd, addr);
 
 				if (ptrdata == (void *)-1) {
 					munmap(ptrdata, LEN_SIZE);
@@ -520,8 +524,8 @@ int scan_pci(void)
 
 				if ((*ptrdata != ptr_content) && (*ptrdata != 0)) {
 					if (recognize_pcie(ptrdata) == 2) {
-						printf("%02x:%02x.%x debug:'pcie_check a %x %x %x'\n",
-								bus, dev, fun, bus, dev, fun);
+						printf("%02x:%02x.%x debug:pcie_check a %x %x %x\n",
+						       bus, dev, fun, bus, dev, fun);
 						return 2;
 					}
 
@@ -529,20 +533,20 @@ int scan_pci(void)
 						printf("PCI  %02x:%02x.%x: ", bus, dev, fun);
 					else
 						printf("PCIE %02x:%02x.%x: ", bus, dev, fun);
-					printf("vender:0x%04x dev:0x%04x ", (*ptrdata) & 0x0000ffff,
-							((*ptrdata) >> 16) & 0x0000ffff);
+					printf("vedor:0x%04x dev:0x%04x ", (*ptrdata) & 0x0000ffff,
+					       ((*ptrdata) >> 16) & 0x0000ffff);
 					if (((check_list >> 2) & 0x1) == 1)
 						check_pcie(ptrdata);
 					else
 						check_pci(ptrdata);
 
 					if ((check_list & 0x1) == 1) {
-						nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
-						ptrsearch = ptrdata + nextpoint/4;
-						typeshow((uint8_t)(((*ptrsearch)>>20)&0x0f));
-						speedshow((uint8_t)(((*(ptrsearch+0x2c/4))>>1)&0x7f));
-						linkspeed((uint8_t)(*(ptrsearch+0x0c/4)&0x0f));
-						linkwidth((uint8_t)(((*(ptrsearch+0x0c/4))>>4)&0x3f));
+						nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
+						ps = ptrdata + nextpoint / 4;
+						typeshow((u8)(((*ps) >> 20) & 0x0f));
+						speedshow((u8)((*(ps + 0x2c / 4) >> 1) & 0x7f));
+						linkspeed((u8)(*(ps + 0x0c / 4) & 0x0f));
+						linkwidth((u8)(((*(ps + 0x0c / 4)) >> 4) & 0x3f));
 					}
 					if (((check_list >> 1) & 0x1) == 1)
 						pci_show(bus, dev, fun);
@@ -555,15 +559,15 @@ int scan_pci(void)
 	return 0;
 }
 
-int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
+int specific_pcie_cap(u32 *ptrdata, u16 cap)
 {
-	uint8_t nextpoint = 0;
-	uint32_t next = 0x100, num = 0;
-	uint16_t offset = 0, cap_value = 0;
+	u8 nextpoint = 0;
+	u32 next = 0x100, num = 0;
+	u16 offset = 0, cap_value = 0;
 	int ret_result = 0;
 
 	spec_num = 0;
-	nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
+	nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
 	if (nextpoint == 0xff) {
 		/* For debug
 		 * printf("PCI cap offset:%x is 0xff, addr:%p ptrdata:%x, return 2\n",
@@ -572,8 +576,8 @@ int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
 		return 2;
 	}
 
-	cap_value = (uint16_t)(*(ptrdata + next/4));
-	offset = (uint16_t)(*(ptrdata + next/4) >> 20);
+	cap_value = (u16)(*(ptrdata + next / 4));
+	offset = (u16)(*(ptrdata + next / 4) >> 20);
 	if ((offset == 0) | (offset == 0xfff))
 		return 0;
 	if (cap_value == cap) {
@@ -584,13 +588,13 @@ int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
 
 	while (1) {
 		num++;
-		cap_value = (uint16_t)(*(ptrdata + offset/4));
+		cap_value = (u16)(*(ptrdata + offset / 4));
 		if (cap_value == cap) {
 			spec_offset[spec_num] = offset;
 			spec_num++;
 			ret_result = EXP_CAP;
 		}
-		offset = (uint16_t)(*(ptrdata + offset/4) >> 20);
+		offset = (u16)(*(ptrdata + offset / 4) >> 20);
 		if (offset == 0)
 			break;
 		/* Same cap with cap_id should not more than 15 */
@@ -604,9 +608,9 @@ int specific_pcie_cap(uint32_t *ptrdata, uint16_t cap)
 	return ret_result;
 }
 
-int show_pcie_spec_reg(uint32_t offset, uint32_t size, int show, int cap_id)
+int show_pcie_spec_reg(u32 offset, u32 size, int show, int cap_id)
 {
-	uint32_t reg_offset = 0, get_size = 0xffffffff, left_off = 0;
+	u32 reg_offset = 0, get_size = 0xffffffff, left_off = 0;
 
 	if (size != 32) {
 		get_size = get_size >> size;
@@ -615,7 +619,7 @@ int show_pcie_spec_reg(uint32_t offset, uint32_t size, int show, int cap_id)
 	}
 
 	reg_offset = spec_offset[cap_id] + offset;
-	reg_value = (uint32_t)(*(reg_data + reg_offset/4));
+	reg_value = (u32)(*(reg_data + reg_offset / 4));
 	left_off = reg_offset % 4;
 	if (left_off != 0) {
 		//printf("(left:%dbyte)", left_off);
@@ -623,20 +627,20 @@ int show_pcie_spec_reg(uint32_t offset, uint32_t size, int show, int cap_id)
 	}
 	reg_value = reg_value & get_size;
 	if (((check_list >> 7) & 0x1) == 1) {
-		*(reg_data + reg_offset/4) = check_value << (left_off * 8);
+		*(reg_data + reg_offset / 4) = check_value << (left_off * 8);
 		printf(" Reg_offset:%x, size:%dbit, reg_value:%x->0x%x addr:%p",
-			reg_offset, size, reg_value,
-			(uint32_t)(((*(reg_data + reg_offset/4) >> (left_off * 8))
-				& get_size)),
-			reg_data + reg_offset/4 + reg_offset%4);
-	} else if (show)
+		       reg_offset, size, reg_value,
+		       (u32)(((*(reg_data + reg_offset / 4) >> (left_off * 8)) & get_size)),
+		       reg_data + reg_offset / 4 + reg_offset % 4);
+	} else if (show) {
 		printf(" Reg_offset:%x, size:%dbit, reg_value:%x.",
-			reg_offset, size, reg_value);
+		       reg_offset, size, reg_value);
+	}
 
 	return 0;
 }
 
-int verify_pcie_reg(uint32_t val)
+int verify_pcie_reg(u32 val)
 {
 	if (reg_value == val)
 		return 1;
@@ -644,9 +648,9 @@ int verify_pcie_reg(uint32_t val)
 		return 0;
 }
 
-int contain_pcie_reg(uint32_t val)
+int contain_pcie_reg(u32 val)
 {
-	uint32_t compare_value;
+	u32 compare_value;
 
 	compare_value = reg_value & val;
 	if (compare_value == val)
@@ -655,71 +659,75 @@ int contain_pcie_reg(uint32_t val)
 		return 1;
 }
 
-int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
+int check_pcie_register(u16 cap, u32 offset, u32 size)
 {
 	int i = 0, vendor = 0, dvsec_id = 0;
 
 	for (i = 0; i < spec_num; i++) {
 		if (i == 0)
 			printf("Find cap %04x PCIe %02x:%02x.%x DEV:%04x base_offset:%03x.",
-				cap, sbus, sdev, sfunc, dev_id, spec_offset[i]);
+			       cap, sbus, sdev, sfunc, dev_id, spec_offset[i]);
 		else
 			printf("                                     base_offset:%x.",
-				spec_offset[i]);
+			       spec_offset[i]);
 
 		if (((check_list >> 4) & 0x1) == 1) {
 			/* Check vendor ID offset 4bytes, size 16bit */
-			show_pcie_spec_reg((uint32_t)4, (uint32_t)16, 0, i);
+			show_pcie_spec_reg((u32)4, (u32)16, 0, i);
 			if (verify_pcie_reg(CXL_VENDOR) | verify_pcie_reg(CXL_1_1_VENDOR)) {
 				vendor = reg_value;
 				/* Check DVSEC ID in offset 8 bytes with size 16bit */
-				show_pcie_spec_reg((uint32_t)8, (uint32_t)16, 0, i);
+				show_pcie_spec_reg((u32)8, (u32)16, 0, i);
 				dvsec_id = reg_value;
 				printf("DVSEC_vendor:%x. DVSEC_ID:%x.", vendor, dvsec_id);
 
-				if ( dvsec_id == 0) {
-					/*
-					 * CXL1.1/2.0: DVSEC ID 0 upper 8bits of the CXL length should be 03, len:0x38
-					 * CXL3.0: DVSEC ID 0 byte offset 7 of CXL length should be 03, len:0x3C
-					 * CXL3.0 sample: 23 00 c1 3a 98 1e c2 03
-					 */
-					show_pcie_spec_reg((uint32_t)7, (uint32_t)8, 0, i);
+				if (dvsec_id == 0) {
+				/*
+				 * CXL1.1/2.0: DVSEC ID0 upper 8bits CXL len should be 03, len:0x38
+				 * CXL3.0: DVSEC ID0 byte offset 7 CXL len should be 03, len:0x3C
+				 * CXL3.0 sample: 23 00 c1 3a 98 1e c2 03
+				 */
+					show_pcie_spec_reg((u32)7, (u32)8, 0, i);
 					if (verify_pcie_reg(3)) {
 						printf("<CXL PCI> ");
 						is_cxl = 1;
 					}
 				}
-			} else
+			} else {
 				printf("Not CXL vendor:0x%x, actual vendor:%x.",
-					CXL_VENDOR, vendor);
+				       CXL_VENDOR, vendor);
+			}
 		}
 		enum_num++;
 		show_pcie_spec_reg(offset, size, 1, i);
 		if (((check_list >> 5) & 0x1) == 1) {
-			if (verify_pcie_reg(check_value))
+			if (verify_pcie_reg(check_value)) {
 				printf("Match as expected.");
-			else {
+			} else {
 				printf("reg_value:%x is not equal to check_value:%x.",
-					reg_value, check_value);
+				       reg_value, check_value);
 				if (((check_list >> 4) & 0x1) == 1) {
 					if (is_cxl == 1)
 						err_num++;
-				} else
+				} else {
 					err_num++;
+				}
 			}
 		}
 
 		if (((check_list >> 6) & 0x1) == 1) {
 			if (contain_pcie_reg(check_value)) {
 				printf("reg_value:%x is not included by check_value:%x.",
-					reg_value, check_value);
+				       reg_value, check_value);
 				if (((check_list >> 4) & 0x1) == 1) {
 					if (is_cxl == 1)
 						err_num++;
-				} else
+				} else {
 					err_num++;
-			} else
+				}
+			} else {
 				printf("Include as expected.");
+			}
 		}
 		printf("\n");
 	}
@@ -727,15 +735,15 @@ int check_pcie_register(uint16_t cap, uint32_t offset, uint32_t size)
 	return 0;
 }
 
-int find_pcie_reg(uint16_t cap, uint32_t offset, uint32_t size)
+int find_pcie_reg(u16 cap, u32 offset, u32 size)
 {
-	uint64_t addr = 0;
-	uint32_t *ptrdata = malloc(sizeof(unsigned long) * 4096);
-	uint32_t bus, dev, func;
+	u64 addr = 0;
+	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096);
+	u32 bus, dev, func;
 	int fd, result = 0;
 
 	printf("PCIe specific register-> cap:0x%04x, offset:0x%x, size:%dbit:\n",
-		cap, offset, size);
+	       cap, offset, size);
 
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
@@ -749,7 +757,7 @@ int find_pcie_reg(uint16_t cap, uint32_t offset, uint32_t size)
 			for (func = 0; func < MAX_FUN; ++func) {
 				addr = BASE_ADDR | (bus << 20) | (dev << 15) | (func << 12);
 				ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
-							MAP_SHARED, fd, addr);
+					       MAP_SHARED, fd, addr);
 				/* If this bus:fun.dev is all FF will break and check next */
 				if (ptrdata == (void *)-1) {
 					munmap(ptrdata, LEN_SIZE);
@@ -767,9 +775,9 @@ int find_pcie_reg(uint16_t cap, uint32_t offset, uint32_t size)
 						is_cxl = 0;
 						check_pcie_register(cap, offset, size);
 					} else if (result == 2) {
-						/* This PCIe ended with unknow CAP ff so mark it */
-						printf("%02x:%02x.%x debug:'pcie_check a %x %x %x'\n",
-								bus, dev, func, bus, dev, func);
+						/* This PCIe ended with unknown CAP ff, mark it */
+						printf("%02x:%02x.%x debug:pcie_check a %x %x %x\n",
+						       bus, dev, func, bus, dev, func);
 						munmap(ptrdata, LEN_SIZE);
 						close(fd);
 						return 2;
@@ -783,15 +791,15 @@ int find_pcie_reg(uint16_t cap, uint32_t offset, uint32_t size)
 	return 0;
 }
 
-int specific_pcie_check(uint16_t cap, uint32_t offset, uint32_t size)
+int specific_pcie_check(u16 cap, u32 offset, u32 size)
 {
-	uint64_t addr = 0;
-	uint32_t *ptrdata = malloc(sizeof(unsigned long) * 4096);
+	u64 addr = 0;
+	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096);
 	int fd, result = 0;
-	is_cxl = 0;
 
+	is_cxl = 0;
 	printf("PCIe %x:%x.%x: cap:0x%04x, offset:0x%x, size:%dbit:\n",
-		sbus, sdev, sfunc, cap, offset, size);
+	       sbus, sdev, sfunc, cap, offset, size);
 
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
@@ -802,7 +810,7 @@ int specific_pcie_check(uint16_t cap, uint32_t offset, uint32_t size)
 	ptrdata = &ptr_content;
 	addr = BASE_ADDR | (sbus << 20) | (sdev << 15) | (sfunc << 12);
 	ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
-					MAP_SHARED, fd, addr);
+		       MAP_SHARED, fd, addr);
 	if (ptrdata == (void *)-1) {
 		printf("mmap failed\n");
 		munmap(ptrdata, LEN_SIZE);
@@ -817,7 +825,7 @@ int specific_pcie_check(uint16_t cap, uint32_t offset, uint32_t size)
 			check_pcie_register(cap, offset, size);
 		} else {
 			printf("Could not find cap:%x for %x:%x.%x\n",
-				cap, sbus, sdev, sfunc);
+			       cap, sbus, sdev, sfunc);
 			munmap(ptrdata, LEN_SIZE);
 			close(fd);
 			return 1;
@@ -829,22 +837,22 @@ int specific_pcie_check(uint16_t cap, uint32_t offset, uint32_t size)
 	return 0;
 }
 
-int specific_pci_cap(uint32_t *ptrdata, uint8_t cap)
+int specific_pci_cap(u32 *ptrdata, u8 cap)
 {
-	uint8_t nextpoint = 0;
-	uint32_t *ptrsearch;
-	uint8_t num = 0, offset = 0, cap_value = 0;
+	u8 nextpoint = 0;
+	u32 *ptrsearch;
+	u8 num = 0, offset = 0, cap_value = 0;
 	int ret_result = 0;
 
-	nextpoint = (uint8_t)(*(ptrdata + PCI_CAP_START/4));
+	nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
 
-	if ((nextpoint == 0) | (nextpoint == 0xff)) {
+	if ((nextpoint == 0) | (nextpoint == 0xff))
 		return 2;
-	}
-	ptrsearch = ptrdata + nextpoint/4;
+
+	ptrsearch = ptrdata + nextpoint / 4;
 
 	while (1) {
-		cap_value = (uint8_t)(*ptrsearch);
+		cap_value = (u8)(*ptrsearch);
 		if (cap_value == 0) {
 			ret_result = 2;
 			break;
@@ -855,8 +863,8 @@ int specific_pci_cap(uint32_t *ptrdata, uint8_t cap)
 			ret_result = 0;
 			break;
 		}
-		nextpoint = (uint8_t)(((*ptrsearch) >> 8) & 0xff);
-		ptrsearch = ptrdata + ((uint8_t)(((*ptrsearch) >> 8) & 0x00ff))/4;
+		nextpoint = (u8)(((*ptrsearch) >> 8) & 0xff);
+		ptrsearch = ptrdata + ((u8)(((*ptrsearch) >> 8) & 0x00ff)) / 4;
 		if ((offset == 0) | (offset == 0xff)) {
 			ret_result = 2;
 			break;
@@ -872,9 +880,9 @@ int specific_pci_cap(uint32_t *ptrdata, uint8_t cap)
 	return ret_result;
 }
 
-int show_pci_spec_reg(uint8_t offset, uint32_t size, int show)
+int show_pci_spec_reg(u8 offset, u32 size, int show)
 {
-	uint32_t reg_offset = 0, get_size = 0xffffffff, left_off = 0;
+	u32 reg_offset = 0, get_size = 0xffffffff, left_off = 0;
 
 	if (size != 32) {
 		get_size = get_size >> size;
@@ -883,64 +891,68 @@ int show_pci_spec_reg(uint8_t offset, uint32_t size, int show)
 	}
 
 	reg_offset = pci_offset + offset;
-	reg_value = (uint32_t)(*(reg_data + reg_offset/4));
+	reg_value = (u32)(*(reg_data + reg_offset / 4));
 	left_off = reg_offset % 4;
 	if (left_off != 0) {
-		//printf("(left:%dbyte)", left_off);
+		/*
+		 * Debug
+		 * printf("(left:%dbyte)", left_off);
+		 */
 		reg_value = reg_value >> (left_off * 8);
 	}
 	reg_value = reg_value & get_size;
 	if (((check_list >> 7) & 0x1) == 1) {
-		*(reg_data + reg_offset/4) = check_value << (left_off * 8);
+		*(reg_data + reg_offset / 4) = check_value << (left_off * 8);
 		printf(" Reg_offset:%x, size:%dbit, reg_value:%x->0x%x addr:%p",
-			reg_offset, size, reg_value,
-			(uint32_t)(((*(reg_data + reg_offset/4) >> (left_off * 8))
-				& get_size)),
-			reg_data + reg_offset/4 + reg_offset%4);
+		       reg_offset, size, reg_value,
+		       (u32)(((*(reg_data + reg_offset / 4) >> (left_off * 8))
+		       & get_size)),
+		       reg_data + reg_offset / 4 + reg_offset % 4);
 	} else if (show)
 		printf(" Reg_offset:%x, size:%dbit, reg_value:%x.",
-			reg_offset, size, reg_value);
+		       reg_offset, size, reg_value);
 
 	return 0;
 }
 
-int check_pci_register(uint8_t cap, uint8_t offset, uint32_t size)
+int check_pci_register(u8 cap, u8 offset, u32 size)
 {
 	printf("Find cap 0x%02x PCI %02x:%02x.%x DEV:%04x pci_offset:%02x.",
-		cap, sbus, sdev, sfunc, dev_id, pci_offset);
+	       cap, sbus, sdev, sfunc, dev_id, pci_offset);
 
 	show_pci_spec_reg(offset, size, 1);
 	if (((check_list >> 5) & 0x1) == 1) {
-		if (verify_pcie_reg(check_value))
+		if (verify_pcie_reg(check_value)) {
 			printf("Match as expected.");
-		else {
+		} else {
 			printf("reg_value:%x is not equal to check_value:%x.",
-				reg_value, check_value);
+			       reg_value, check_value);
 			err_num++;
 		}
 	}
 	if (((check_list >> 6) & 0x1) == 1) {
 		if (contain_pcie_reg(check_value)) {
 			printf("reg_value:%x is not included by check_value:%x.",
-				reg_value, check_value);
+			       reg_value, check_value);
 			err_num++;
-		} else
+		} else {
 			printf("Include as expected.");
+		}
 	}
 	printf("\n");
 
 	return 0;
 }
 
-int find_pci_reg(uint16_t cap, uint32_t offset, uint32_t size)
+int find_pci_reg(u16 cap, u32 offset, u32 size)
 {
-	uint64_t addr = 0;
-	uint32_t *ptrdata = malloc(sizeof(unsigned long) * 4096);
-	uint32_t bus, dev, func;
+	u64 addr = 0;
+	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096);
+	u32 bus, dev, func;
 	int fd, result = 0;
 
 	printf("PCI specific register-> cap:0x%04x, offset:0x%x, size:%dbit:\n",
-		cap, offset, size);
+	       cap, offset, size);
 
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
@@ -954,7 +966,7 @@ int find_pci_reg(uint16_t cap, uint32_t offset, uint32_t size)
 			for (func = 0; func < MAX_FUN; ++func) {
 				addr = BASE_ADDR | (bus << 20) | (dev << 15) | (func << 12);
 				ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
-							MAP_SHARED, fd, addr);
+					       MAP_SHARED, fd, addr);
 				/* If this bus:fun.dev is all FF will break and check next */
 				if (ptrdata == (void *)-1) {
 					munmap(ptrdata, LEN_SIZE);
@@ -962,7 +974,7 @@ int find_pci_reg(uint16_t cap, uint32_t offset, uint32_t size)
 				}
 
 				if ((*ptrdata != ptr_content) && (*ptrdata != 0)) {
-					result = specific_pci_cap(ptrdata, (uint8_t)cap);
+					result = specific_pci_cap(ptrdata, (u8)cap);
 					if (result == 0) {
 						sbus = bus;
 						sdev = dev;
@@ -971,11 +983,11 @@ int find_pci_reg(uint16_t cap, uint32_t offset, uint32_t size)
 						dev_id = *(ptrdata) >> 16;
 						is_cxl = 0;
 						enum_num++;
-						check_pci_register((uint8_t)cap, (uint8_t)offset, size);
+						check_pci_register((u8)cap, (u8)offset, size);
 					} else if (result == 1) {
-						/* This PCI ended with unknow CAP ff so mark it */
-						printf("%02x:%02x.%x debug:'pcie_check a %x %x %x'\n",
-								bus, dev, func, bus, dev, func);
+						/* This PCI ended with unknown CAP ff so mark it */
+						printf("%02x:%02x.%x debug:pcie_check a %x %x %x\n",
+						       bus, dev, func, bus, dev, func);
 						munmap(ptrdata, LEN_SIZE);
 						close(fd);
 						return 2;
@@ -991,20 +1003,20 @@ int find_pci_reg(uint16_t cap, uint32_t offset, uint32_t size)
 
 int main(int argc, char *argv[])
 {
-	char parm;
-	uint32_t bus, dev, func, offset, size;
-	uint16_t cap;
+	char param;
+	u32 bus, dev, func, offset, size;
+	u16 cap;
 
 	printf("Remove CONFIG_IO_STRICT_DEVMEM in kconfig when all result 0.\n");
 	if (argc == 2) {
-		if (sscanf(argv[1], "%c", &parm) != 1) {
-			printf("Invalid parm:%c\n", parm);
+		if (sscanf(argv[1], "%c", &param) != 1) {
+			printf("Invalid param:%c\n", param);
 			usage();
 		}
-		printf("1 parameters: parm=%c\n", parm);
+		printf("1 parameters: param=%c\n", param);
 		find_bar();
 
-		switch (parm) {
+		switch (param) {
 		case 'a':
 			check_list = (check_list | 0x7);
 			break;
@@ -1032,12 +1044,12 @@ int main(int argc, char *argv[])
 		}
 		scan_pci();
 	}  else if ((argc == 4) | (argc == 5) | (argc == 6) | (argc == 9)) {
-		if (sscanf(argv[1], "%c", &parm) != 1) {
-			printf("Invalid parm:%c\n", parm);
+		if (sscanf(argv[1], "%c", &param) != 1) {
+			printf("Invalid param:%c\n", param);
 			usage();
 		}
 		find_bar();
-		switch (parm) {
+		switch (param) {
 		case 'i':
 			is_pcie = 0;
 			check_list = (check_list | 0x8);
@@ -1101,14 +1113,14 @@ int main(int argc, char *argv[])
 				printf("Invalid size:%d", size);
 				usage();
 			}
-			if ((argc == 5) && (parm != 'i')) {
+			if (argc == 5 && param != 'i') {
 				find_pcie_reg(cap, offset, size);
 				if (enum_num == 0) {
 					printf("No cap:0x%x PCI/PCIe found\n", cap);
 					err_num = 1;
 				}
 				return err_num;
-			} else if ((argc == 5) && (parm == 'i')) {
+			} else if (argc == 5 && param == 'i') {
 				find_pci_reg(cap, offset, size);
 				if (enum_num == 0) {
 					printf("No cap:0x%x PCI found\n", cap);
@@ -1201,7 +1213,7 @@ int main(int argc, char *argv[])
 				pci_show(bus, dev, func);
 			return 0;
 		}
-		printf("parm:%c bus:dev.func: %02x:%02x.%x\n", parm, bus, dev, func);
+		printf("param:%c bus:dev.func: %02x:%02x.%x\n", param, bus, dev, func);
 
 		pci_show(bus, dev, func);
 	} else {
