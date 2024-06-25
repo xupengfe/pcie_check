@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * PCIE/PCI info and capability check functions
+ * PCIE/PCI register check based on PCIE spec.
  *
  * Author: Xu, Pengfei <pengfei.xu@intel.com>
  *
@@ -837,7 +837,7 @@ int specific_pci_cap(u32 *ptrdata, u8 cap)
 {
 	u8 nextpoint = 0;
 	u32 *ptrsearch;
-	u8 num = 0, offset = 0, cap_value = 0;
+	u8 num = 0, cap_value = 0;
 	int ret_result = 0;
 
 	nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
@@ -861,7 +861,7 @@ int specific_pci_cap(u32 *ptrdata, u8 cap)
 		}
 		nextpoint = (u8)(((*ptrsearch) >> 8) & 0xff);
 		ptrsearch = ptrdata + ((u8)(((*ptrsearch) >> 8) & 0x00ff)) / 4;
-		if ((offset == 0) | (offset == 0xff)) {
+		if ((nextpoint == 0) | (nextpoint == 0xff)) {
 			ret_result = 2;
 			break;
 		}
@@ -971,6 +971,10 @@ int find_pci_reg(u16 cap, u32 offset, u32 size)
 
 				if ((*ptrdata != ptr_content) && (*ptrdata != 0)) {
 					result = specific_pci_cap(ptrdata, (u8)cap);
+					/*
+					 * Debug
+					 * printf("BDF:%02x:%02x.%x: result: %d\n", bus, dev, func, result);
+					 */
 					if (result == 0) {
 						sbus = bus;
 						sdev = dev;
