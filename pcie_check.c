@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * PCIE/PCI register check based on PCIE spec.
+ * PCI/PCIe register check based on PCIe spec.
  *
  * Author: Xu, Pengfei <pengfei.xu@intel.com>
  *
@@ -20,6 +20,7 @@
 #define MAX_DEV 32
 #define MAX_FUN 8
 #define PCI_CAP_START 0x34
+#define PCI_EXPRESS 0x10
 #define DVSEC_CAP 0x0023
 #define CXL_VENDOR 0x1e98
 #define CXL_1_1_VENDOR 0x8086
@@ -149,11 +150,10 @@ int find_bar(void)
 {
 #ifdef __x86_64__
 	FILE *maps;
-	unsigned long *start = malloc(sizeof(unsigned long) * 5);
+	unsigned long address;
 	char line[MAPS_LINE_LEN], base_end[MAPS_LINE_LEN];
 	char *mmio_bar = "MMCONFIG";
 
-	//printf("Try to open /proc/iomem\n");
 	maps = fopen("/proc/iomem", "r");
 	if (!maps) {
 		printf("[WARN]\tCould not open /proc/iomem\n");
@@ -164,16 +164,16 @@ int find_bar(void)
 		if (!strstr(line, mmio_bar))
 			continue;
 
-		if (sscanf(line, "%p-%s", &start, base_end) != 2)
+		if (sscanf(line, "%lx-%s", &address, base_end) != 2)
 			continue;
 
-		printf("start:%p, base_end:%s\n", start, base_end);
-		if (!start) {
-			printf("BAR(start) is NULL, did you use root to execute?\n");
-			exit(1);
+		printf("start_addr:0x%lx, base_end:%s\n", address, base_end);
+		if (!address) {
+			printf("BAR(address) is NULL, did you use root to execute?\n");
+			break;
 		}
-		printf("BAR(Base Address Register) for mmio MMCONFIG:%p\n", start);
-		BASE_ADDR = (unsigned long)start;
+		printf("BAR(Base Address Register) for mmio MMCONFIG:0x%lx\n", address);
+		BASE_ADDR = address;
 		break;
 	}
 	fclose(maps);
@@ -230,88 +230,41 @@ void typeshow(u8 data)
 	}
 }
 
-void speedshow(u8 speed)
+void speed_show(u8 speed)
 {
-	printf("\tspeed: %x   - ", speed);
+	printf(" %x - ", speed);
 	switch (speed) {
-	case 0x00:
-		printf("2.5GT/S");
+	case 0x1:
+		printf("2.5GT/S\n");
 		break;
-	case 0x02:
-		printf("5GT/S");
+	case 0x2:
+		printf("5GT/S\n");
 		break;
-	case 0x04:
-		printf("8GT/S");
+	case 0x3:
+		printf("8GT/S\n");
+		break;
+	case 0x4:
+		printf("16GT/S\n");
+		break;
+	case 0x5:
+		printf("32GT/s\n");
+		break;
+	case 0x6:
+		printf("64GT/s\n");
 		break;
 	default:
-		printf("reserved");
+		printf("reserved\n");
 		break;
 	}
-	printf("\n");
-}
-
-void linkspeed(u8 speed)
-{
-	printf("\tlink speed:%x   - ", speed);
-	switch (speed) {
-	case 0x01:
-		printf("SupportedLink Speeds Vector filed bit 0");
-		break;
-	case 0x02:
-		printf("SupportedLink Speeds Vector filed bit 1");
-		break;
-	case 0x03:
-		printf("SupportedLink Speeds Vector filed bit 2");
-		break;
-	case 0x04:
-		printf("SupportedLink Speeds Vector filed bit 3");
-		break;
-	case 0x05:
-		printf("SupportedLink Speeds Vector filed bit 4");
-		break;
-	case 0x06:
-		printf("SupportedLink Speeds Vector filed bit 5");
-		break;
-	case 0x07:
-		printf("SupportedLink Speeds Vector filed bit 6");
-		break;
-	default:
-		printf("reserved");
-		break;
-	}
-	printf("\n");
 }
 
 void linkwidth(u8 width)
 {
-	printf("\tlink width:%02x - ", width);
-	switch (width) {
-	case 0x01:
-		printf("x1");
-		break;
-	case 0x02:
-		printf("x2");
-		break;
-	case 0x04:
-		printf("x4");
-		break;
-	case 0x08:
-		printf("x8");
-		break;
-	case 0x0c:
-		printf("x12");
-		break;
-	case 0x10:
-		printf("x16");
-		break;
-	case 0x20:
-		printf("x32");
-		break;
-	default:
-		printf("reserved");
-		break;
-	}
-	printf("\n");
+	printf("\tLink Capabilities Register(0x0c bit9:4) width:%02x - ", width);
+	if (width > 0 && width < 17 && (width & width - 1) == 0)
+		printf("x%d\n", width);
+	else
+		printf("reserved\n");
 }
 
 int check_pcie(u32 *ptrdata)
@@ -325,7 +278,7 @@ int check_pcie(u32 *ptrdata)
 		offset = (u16)(*(ptrdata + next / 4) >> 20);
 		ver = (u8)((*(ptrdata + next / 4) >> 16) & 0xf);
 		// Compile will warning: warning: suggest parentheses around comparison...
-		if ((offset == 0) | (offset == 0xfff)) {
+		if (offset == 0 || offset == 0xfff) {
 			printf("PCIE cap:%04x ver:%01x off:%03x|\n", cap, ver, offset);
 			return 0;
 		}
@@ -362,7 +315,7 @@ int check_pci(u32 *ptrdata)
 	nextpoint = (u8)(*(ptrdata + nextpoint / 4));
 	ptrsearch = ptrdata + nextpoint / 4;
 
-	if ((nextpoint == 0) | (nextpoint == 0xff)) {
+	if (nextpoint == 0 || nextpoint == 0xff) {
 		printf("off:0x34->%02x|\n", nextpoint);
 		return 0;
 	}
@@ -399,6 +352,7 @@ int pci_show(u32 bus, u32 dev, u32 fun)
 
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
+		free(ptrdata);
 		printf("open /dev/mem failed!\n");
 		return -1;
 	}
@@ -485,21 +439,86 @@ int recognize_pcie(u32 *ptrdata)
 	return 0;
 }
 
+int specific_pci_cap(u32 *ptrdata, u8 cap)
+{
+	u8 nextpoint = 0;
+	u32 *ptrsearch;
+	u8 num = 0, cap_value = 0;
+	int ret_result = 0;
+
+	nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
+
+	if (nextpoint == 0 || nextpoint == 0xff)
+		return 2;
+
+	ptrsearch = ptrdata + nextpoint / 4;
+
+	while (1) {
+		cap_value = (u8)(*ptrsearch);
+		if (cap_value == 0) {
+			ret_result = 2;
+			break;
+		}
+
+		if (cap_value == cap) {
+			pci_offset = nextpoint;
+			ret_result = 0;
+			break;
+		}
+		nextpoint = (u8)(((*ptrsearch) >> 8) & 0xff);
+		ptrsearch = ptrdata + ((u8)(((*ptrsearch) >> 8) & 0x00ff)) / 4;
+		if (nextpoint == 0 || nextpoint == 0xff) {
+			ret_result = 2;
+			break;
+		}
+		num++;
+		/* avoid offset is wrong and in infinite loop set the max loop 16 */
+		if (num >= 16) {
+			ret_result = 1;
+			break;
+		}
+	}
+
+	return ret_result;
+}
+
+int show_pci_info(u32 *ptrdata)
+{
+	u32 *ptr_search;
+	int result = 0;
+
+	result = specific_pci_cap(ptrdata, (u8)PCI_EXPRESS);
+
+	if (!result) {
+		ptr_search = ptrdata + pci_offset / 4;
+		typeshow((u8)(((*ptr_search) >> 20) & 0x0f));
+		printf("\tLink cap max link speed(offset:%x):",
+		       pci_offset + 0xc);
+		speed_show((u8)(*(ptrdata + (pci_offset + 0xc) / 4) & 0xf));
+		printf("\tLink status current link speed(offset:%x):",
+		       pci_offset + 0x12);
+		speed_show((u8)(*(ptrdata + (pci_offset + 0x10) / 4) >> 16 & 0xf));
+		linkwidth((u8)(((*(ptr_search + 0x0c / 4)) >> 4) & 0x3f));
+	}
+
+	return result;
+}
+
 int scan_pci(void)
 {
 	// Must be 64bit address for 64bit OS!
 	u64 addr = 0;
 	u32 bus, dev, fun;
 	// Must 32bit for data check!
-	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096), *ps;
+	u32 *ptrdata = malloc(sizeof(unsigned long) * 4096);
 	u8 nextpoint;
-
-	int fd;
+	int fd, result;
 
 	fd = open("/dev/mem", O_RDWR);
 
 	if (fd < 0) {
 		printf("open /dev/mem failed!\n");
+		free(ptrdata);
 		return -1;
 	}
 	printf("fd=%d open /dev/mem successfully.\n", fd);
@@ -513,7 +532,7 @@ int scan_pci(void)
 				ptrdata = mmap(NULL, LEN_SIZE, PROT_READ | PROT_WRITE,
 					       MAP_SHARED, fd, addr);
 
-				if (ptrdata == (void *)-1) {
+				if (ptrdata == MAP_FAILED) {
 					munmap(ptrdata, LEN_SIZE);
 					break;
 				}
@@ -522,6 +541,8 @@ int scan_pci(void)
 					if (recognize_pcie(ptrdata) == 2) {
 						printf("%02x:%02x.%x debug:pcie_check a %x %x %x\n",
 						       bus, dev, fun, bus, dev, fun);
+						munmap(ptrdata, LEN_SIZE);
+						close(fd);
 						return 2;
 					}
 
@@ -529,21 +550,18 @@ int scan_pci(void)
 						printf("PCI  %02x:%02x.%x: ", bus, dev, fun);
 					else
 						printf("PCIE %02x:%02x.%x: ", bus, dev, fun);
-					printf("vedor:0x%04x dev:0x%04x ", (*ptrdata) & 0x0000ffff,
+
+					printf("vendor:0x%04x dev:0x%04x ", (*ptrdata) & 0x0000ffff,
 					       ((*ptrdata) >> 16) & 0x0000ffff);
+
 					if (((check_list >> 2) & 0x1) == 1)
 						check_pcie(ptrdata);
 					else
 						check_pci(ptrdata);
 
-					if ((check_list & 0x1) == 1) {
-						nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
-						ps = ptrdata + nextpoint / 4;
-						typeshow((u8)(((*ps) >> 20) & 0x0f));
-						speedshow((u8)((*(ps + 0x2c / 4) >> 1) & 0x7f));
-						linkspeed((u8)(*(ps + 0x0c / 4) & 0x0f));
-						linkwidth((u8)(((*(ps + 0x0c / 4)) >> 4) & 0x3f));
-					}
+					if ((check_list & 0x1) == 1)
+						show_pci_info(ptrdata);
+
 					if (((check_list >> 1) & 0x1) == 1)
 						pci_show(bus, dev, fun);
 				}
@@ -574,7 +592,7 @@ int specific_pcie_cap(u32 *ptrdata, u16 cap)
 
 	cap_value = (u16)(*(ptrdata + next / 4));
 	offset = (u16)(*(ptrdata + next / 4) >> 20);
-	if ((offset == 0) | (offset == 0xfff))
+	if (offset == 0 || offset == 0xfff)
 		return 0;
 	if (cap_value == cap) {
 		spec_offset[spec_num] = next;
@@ -670,7 +688,7 @@ int check_pcie_register(u16 cap, u32 offset, u32 size)
 		if (((check_list >> 4) & 0x1) == 1) {
 			/* Check vendor ID offset 4bytes, size 16bit */
 			show_pcie_spec_reg((u32)4, (u32)16, 0, i);
-			if (verify_pcie_reg(CXL_VENDOR) | verify_pcie_reg(CXL_1_1_VENDOR)) {
+			if (verify_pcie_reg(CXL_VENDOR) || verify_pcie_reg(CXL_1_1_VENDOR)) {
 				vendor = reg_value;
 				/* Check DVSEC ID in offset 8 bytes with size 16bit */
 				show_pcie_spec_reg((u32)8, (u32)16, 0, i);
@@ -743,6 +761,7 @@ int find_pcie_reg(u16 cap, u32 offset, u32 size)
 
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
+		free(ptrdata);
 		printf("open /dev/mem failed!\n");
 		return -1;
 	}
@@ -800,6 +819,7 @@ int specific_pcie_check(u16 cap, u32 offset, u32 size)
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
 		printf("open /dev/mem failed!\n");
+		free(ptrdata);
 		return -1;
 	}
 
@@ -831,49 +851,6 @@ int specific_pcie_check(u16 cap, u32 offset, u32 size)
 
 	close(fd);
 	return 0;
-}
-
-int specific_pci_cap(u32 *ptrdata, u8 cap)
-{
-	u8 nextpoint = 0;
-	u32 *ptrsearch;
-	u8 num = 0, cap_value = 0;
-	int ret_result = 0;
-
-	nextpoint = (u8)(*(ptrdata + PCI_CAP_START / 4));
-
-	if ((nextpoint == 0) | (nextpoint == 0xff))
-		return 2;
-
-	ptrsearch = ptrdata + nextpoint / 4;
-
-	while (1) {
-		cap_value = (u8)(*ptrsearch);
-		if (cap_value == 0) {
-			ret_result = 2;
-			break;
-		}
-
-		if (cap_value == cap) {
-			pci_offset = nextpoint;
-			ret_result = 0;
-			break;
-		}
-		nextpoint = (u8)(((*ptrsearch) >> 8) & 0xff);
-		ptrsearch = ptrdata + ((u8)(((*ptrsearch) >> 8) & 0x00ff)) / 4;
-		if ((nextpoint == 0) | (nextpoint == 0xff)) {
-			ret_result = 2;
-			break;
-		}
-		num++;
-		/* avoid offset is wrong and in infinite loop set the max loop 16 */
-		if (num >= 16) {
-			ret_result = 1;
-			break;
-		}
-	}
-
-	return ret_result;
 }
 
 int show_pci_spec_reg(u8 offset, u32 size, int show)
@@ -952,6 +929,7 @@ int find_pci_reg(u16 cap, u32 offset, u32 size)
 
 	fd = open("/dev/mem", O_RDWR);
 	if (fd < 0) {
+		free(ptrdata);
 		printf("open /dev/mem failed!\n");
 		return -1;
 	}
@@ -973,7 +951,8 @@ int find_pci_reg(u16 cap, u32 offset, u32 size)
 					result = specific_pci_cap(ptrdata, (u8)cap);
 					/*
 					 * Debug
-					 * printf("BDF:%02x:%02x.%x: result: %d\n", bus, dev, func, result);
+					 * printf("BDF:%02x:%02x.%x: result: %d\n",
+					 *        bus, dev, func, result);
 					 */
 					if (result == 0) {
 						sbus = bus;
